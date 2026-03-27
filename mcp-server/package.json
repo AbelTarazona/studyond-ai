@@ -1,0 +1,27 @@
+{
+  "name": "start-hack-2026-studyond",
+  "version": "1.0.0",
+  "description": "Welcome! This repository contains everything you need to work on the Studyond hackathon challenge.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "serve": "node server.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MichaBrugger/start-hack-2026-studyond.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/MichaBrugger/start-hack-2026-studyond/issues"
+  },
+  "homepage": "https://github.com/MichaBrugger/start-hack-2026-studyond#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  },
+  "type": "module"
+}
