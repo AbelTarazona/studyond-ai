@@ -1,99 +1,136 @@
 # MCP + IA: Como Funciona En Este Monorepo
 
-Este documento explica como se conecta la IA con MCP en este proyecto, que partes estan activas hoy y que partes ya estan preparadas para escalar.
+Arquitectura activa hoy: el frontend envía mensajes al backend, el backend recupera contexto del
+Studyond Brain con RAG y genera la respuesta con MiniMax. El proxy MCP está disponible como capa
+adicional de acceso al filesystem de contexto.
 
-## Resumen Rapido
+## Diagrama de Flujo
 
-- La IA conversacional del producto usa Anthropic (Claude) desde el frontend.
-- El servidor MCP vive en mcp-server y expone acceso controlado al conocimiento en context.
-- El frontend ya tiene tools MCP definidas para un agente LangChain.
-- Actualmente, ese agente no esta conectado a la UI, pero la infraestructura base esta lista.
+```
+┌─────────────────────────────────────────────────────┐
+│                    USUARIO                          │
+└─────────────────────┬───────────────────────────────┘
+                      │ escribe mensaje
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│           frontend-chat  (React :5173)              │
+│                                                     │
+│   App.tsx  →  POST /api/chat  { messages }          │
+└─────────────────────┬───────────────────────────────┘
+                      │ HTTP
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│           mcp-server  (Express :3001)               │
+│                                                     │
+│  routes/chat.mjs                                    │
+│    │                                                │
+│    ├── src/rag.mjs                                  │
+│    │     ├── OpenAI Embeddings (text-embedding-3)   │
+│    │     │     └── vectoriza la consulta            │
+│    │     ├── índice en memoria (embeddings.cache)   │
+│    │     │     └── ~3190 chunks de 70+ notas .md    │
+│    │     ├── similitud coseno → top-K chunks        │
+│    │     └── resuelve WikiLinks [[Nota]] enlazadas  │
+│    │                                                │
+│    └── src/llm.mjs  (MiniMax LLM)                  │
+│          └── genera respuesta con contexto RAG      │
+│                                                     │
+│  Respuesta: { reply, sources, model }               │
+└─────────────────────┬───────────────────────────────┘
+                      │ JSON
+                      ▼
+┌─────────────────────────────────────────────────────┐
+│           frontend-chat                             │
+│                                                     │
+│   muestra respuesta + lista de fuentes citadas      │
+└─────────────────────────────────────────────────────┘
+
+             ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐
+                  Proxy MCP (disponible)
+             │  POST /api/mcp              │
+                GET  /api/tools
+             │  → filesystem MCP           │
+                  → context/
+             └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+```
 
 ## Componentes Clave
 
-### 1) Proxy MCP (backend)
+### 1) Rutas de chat — `mcp-server/src/routes/chat.mjs`
 
-Archivo principal: mcp-server/server.mjs
+Punto de entrada del backend para la conversación.
 
-Responsabilidad:
-
-- Levanta un cliente MCP contra @modelcontextprotocol/server-filesystem.
-- Limita el alcance al directorio mcp-server/context.
-- Expone API HTTP para que el frontend pueda invocar tools MCP.
+- Recibe `{ messages }` del frontend.
+- Llama a `buildContextSystemMessage()` para obtener los chunks RAG relevantes.
+- Invoca el LLM MiniMax con el contexto inyectado.
+- Devuelve `{ reply, sources, model }`.
 
 Endpoints:
 
-- POST /api/mcp: ejecuta una tool MCP con argumentos.
-- GET /api/tools: lista tools disponibles.
+- `POST /api/chat` — conversación con RAG
+- `GET /api/chat/health` — estado del proveedor LLM
 
-Detalle importante:
+### 2) Pipeline RAG — `mcp-server/src/rag.mjs`
 
-- Si el frontend envia un path relativo, el servidor lo normaliza dentro de context para evitar lecturas fuera del dominio previsto.
+Recuperación de contexto desde el Studyond Brain.
 
-### 2) Tools MCP en frontend
+Proceso al recibir una consulta:
 
-Archivo principal: frontend/src/lib/mcpTools.ts
+1. Lee todos los `.md` de `context/` y los divide en chunks (máx. 2000 chars, por secciones H2).
+2. Genera embeddings con OpenAI `text-embedding-3-small` y los guarda en `embeddings.cache.json`.
+3. En cada consulta: vectoriza la pregunta del usuario y calcula similitud coseno contra el índice.
+4. Selecciona los top-K chunks con score ≥ 0.50.
+5. Resuelve WikiLinks (`[[Nombre]]`) en los chunks seleccionados e incluye hasta 2 chunks por nota vinculada.
+6. Construye un `SystemMessage` con todos los snippets y lista de fuentes.
 
-Responsabilidad:
+Parámetros configurables (via `.env`):
 
-- Encapsula llamadas a POST /api/mcp.
-- Define tools tipadas para LangChain:
-  - list_notes
-  - read_note
-  - search_notes
+| Variable | Valor por defecto | Descripción |
+|---|---|---|
+| `RAG_TOP_K` | `5` | Chunks recuperados por consulta |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Modelo de embeddings |
 
-En la practica, estas tools son la capa de traduccion entre una decision del agente y el API MCP real.
+### 3) LLM — `mcp-server/src/llm.mjs`
 
-### 3) Agente IA con tools MCP
+Wrapper sobre MiniMax usando la interfaz compatible con OpenAI.
 
-Archivo principal: frontend/src/lib/agent.ts
+- Modelo: `MiniMax-Text-01` (configurable con `MINIMAX_MODEL`)
+- Temperatura: `0.7` (configurable con `MINIMAX_TEMPERATURE`)
+- Fallback automático si el modelo rechaza el parámetro `temperature`.
 
-Responsabilidad:
+### 4) Proxy MCP — `mcp-server/server.mjs`
 
-- Crea un agente ReAct con createReactAgent.
-- Le adjunta Claude como LLM.
-- Le registra las 3 tools MCP del punto anterior.
+Capa disponible para acceso directo al filesystem de contexto via MCP.
 
-Estado actual:
+- Levanta un cliente MCP contra `@modelcontextprotocol/server-filesystem`.
+- Limita el alcance al directorio `mcp-server/context/`.
+- Normaliza paths relativos para evitar lecturas fuera del dominio.
 
-- El agente existe y compila.
-- No hay uso directo de agentExecutor desde componentes de UI por ahora.
+Endpoints:
 
-### 4) Flujos IA activos hoy en UI
+- `POST /api/mcp` — ejecuta una tool MCP con argumentos
+- `GET /api/tools` — lista tools disponibles (`list_notes`, `read_note`, `search_notes`)
 
-Archivos:
+### 5) Frontend — `frontend-chat/src/App.tsx`
 
-- frontend/src/components/stuck/StuckDialog.tsx
-- frontend/src/components/journey/ActionCard.tsx
-- frontend/src/lib/studyond.ts
+UI de chat minimalista.
 
-Funcionamiento actual:
+- Envía el historial de mensajes a `POST /api/chat`.
+- Renderiza la respuesta en Markdown.
+- Muestra las fuentes citadas (archivos del Studyond Brain usados en la respuesta).
 
-- La UI construye prompts con frontend/src/lib/prompts.ts.
-- Se llama directamente a Anthropic API desde el navegador.
-- La respuesta se renderiza en los componentes (por ejemplo, en el dialogo de bloqueo).
+## Cómo Levantarlo En Local
 
-Esto significa que hoy conviven dos estrategias:
+1. Configurar variables de entorno:
 
-- IA directa (activa en UI).
-- IA con herramientas MCP (lista, pero no conectada a UI).
+```env
+# mcp-server/.env
+MINIMAX_API_KEY=tu_clave
+MINIMAX_BASE_URL=https://api.minimaxi.chat/v1
+OPENAI_API_KEY=tu_clave_openai
+```
 
-## Flujo End-To-End (MCP + IA)
-
-Flujo objetivo cuando se usa el agente con tools:
-
-1. Usuario hace una pregunta en la UI.
-2. El componente invoca agentExecutor.
-3. El agente decide si necesita leer contexto.
-4. Si necesita datos, ejecuta list_notes/read_note/search_notes.
-5. La tool llama al proxy MCP en /api/mcp.
-6. El proxy ejecuta la tool real en el filesystem MCP.
-7. El resultado vuelve al agente.
-8. El agente responde al usuario con contexto del Studyond Brain.
-
-## Como Levantarlo En Local
-
-1. Iniciar proxy MCP:
+2. Iniciar el servidor:
 
 ```bash
 cd mcp-server
@@ -101,51 +138,30 @@ npm install
 npm run serve
 ```
 
-2. Iniciar frontend:
+3. Iniciar el frontend:
 
 ```bash
-cd ../frontend
+cd frontend-chat
 npm install
 npm run dev
 ```
 
-3. Configurar clave de Anthropic en frontend/.env:
-
-```env
-VITE_ANTHROPIC_API_KEY=tu_clave
-```
-
-4. Verificar proxy:
+4. Verificar que el backend responde:
 
 ```bash
-curl http://localhost:3001/api/tools
+curl http://localhost:3001/api/chat/health
 ```
 
-## Diferencia Entre Los Dos Modos De IA
+## Seguridad y Límites Actuales
 
-Modo A (activo): IA directa
+- CORS restringido a orígenes conocidos (`config.mjs`): `localhost:5173`, `localhost:5174`, producción en Vercel.
+- Paths de filesystem normalizados a `context/` para evitar lecturas fuera del dominio.
+- El cache de embeddings se regenera solo si el contenido de las notas cambia (hash MD5 por chunk).
+- Para producción: agregar autenticación y rate limiting en `/api/chat` y `/api/mcp`.
 
-- Menos complejidad.
-- Respuesta rapida.
-- No consulta automaticamente el grafo context.
+## Próximos Pasos Recomendados
 
-Modo B (preparado): IA + MCP tools
-
-- La IA puede explorar notas de contexto antes de responder.
-- Mejora grounding y trazabilidad de respuestas.
-- Requiere conectar agentExecutor en componentes de UI.
-
-## Seguridad Y Limites Actuales
-
-- CORS restringido a origenes conocidos en mcp-server/server.mjs.
-- Paths normalizados a context para reducir riesgo de acceso accidental fuera de base.
-- Si expones esto en produccion, agrega autenticacion y rate limiting en /api/mcp.
-
-## Siguiente Paso Recomendado
-
-Para usar MCP de verdad en la experiencia de usuario:
-
-1. Crear un servicio en frontend que use agentExecutor.invoke().
-2. Integrarlo primero en un punto controlado (por ejemplo, StuckDialog).
-3. Agregar logs de tools usadas para depuracion.
-4. Definir politicas de prompt para citar notas cuando se use contexto MCP.
+1. Conectar el proxy MCP directamente al flujo de chat como tool del agente LangChain.
+2. Exponer logs de las fuentes usadas en la UI para mayor trazabilidad.
+3. Agregar autenticación (JWT o API key) antes de desplegar en producción.
+4. Explorar reranking de chunks para mejorar la relevancia en consultas largas.

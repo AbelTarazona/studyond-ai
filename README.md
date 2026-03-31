@@ -1,119 +1,118 @@
 # Studyond AI Monorepo
 
-Este repositorio concentra dos piezas principales del proyecto:
+Plataforma de IA para guiar a estudiantes a través del journey de tesis. Construida para StartHack 2026.
 
-- `frontend/`: aplicación web (React + Vite + TypeScript) para la experiencia Thesis GPS.
-- `mcp-server/`: servidor Node.js que expone herramientas MCP para consultar el conocimiento en `context/`.
-
-La idea del monorepo es mantener producto, contexto y tooling en un mismo lugar para iterar rápido.
+El monorepo tiene dos paquetes principales: un chat web con IA y un servidor backend con RAG + MCP.
 
 ## Estructura del monorepo
 
 ```text
 studyond-ai/
-  frontend/                # SPA principal (UI, lógica de stages, recomendaciones, AI helpers)
-  mcp-server/              # Proxy MCP + base de conocimiento y assets de marca
-    context/               # "Studyond Brain" (notas atómicas enlazadas)
-    brand/                 # guías visuales, componentes, color, tipografía
-    mock-data/             # datos de ejemplo para experimentación
+  frontend-chat/             # App de chat React + Vite + TypeScript
+  mcp-server/                # Servidor Express: RAG, LLM, proxy MCP, base de conocimiento
+    context/                 # "Studyond Brain" — 70+ notas atómicas en Markdown
+    brand/                   # Guías visuales, colores, tipografía, componentes
+    mock-data/               # Datos de ejemplo para experimentación
+    src/                     # Lógica del servidor (RAG, LLM, rutas, config)
+  start.bat                  # Script de arranque rápido (levanta ambos servidores)
 ```
 
 ## Qué vive en cada paquete
 
-### frontend
+### frontend-chat
 
-Aplicación cliente para estudiantes, con:
+Aplicación web de chat para estudiantes. Se comunica con el backend para obtener respuestas
+fundamentadas en el Studyond Brain.
 
-- mapa de journey de tesis,
-- flujo por etapas,
-- recomendaciones y matching,
-- integración con AI.
+Tecnologías:
 
-Tecnologías principales:
-
-- React 19
-- Vite 5
-- TypeScript
-- Zustand
+- React 19 + Vite + TypeScript
+- TailwindCSS + shadcn/ui
 - Framer Motion
 
-Scripts:
+Scripts (desde `frontend-chat/`):
 
-- `npm run dev`: entorno local
+- `npm run dev`: entorno local en `http://localhost:5173`
 - `npm run build`: build de producción
 - `npm run preview`: previsualizar build
-- `npm run lint`: lint del código
 
 ### mcp-server
 
-Servidor Express que actúa como puente hacia un servidor MCP de filesystem para leer `context/`.
+Servidor Express con tres responsabilidades:
 
-Responsabilidades:
+1. **Chat con RAG** — recibe mensajes, recupera chunks relevantes del Studyond Brain con embeddings
+   y similitud coseno, y genera la respuesta con MiniMax LLM.
+2. **Proxy MCP** — expone herramientas de filesystem MCP para leer `context/` directamente.
+3. **CORS** — configurado para frontend local y producción en Vercel.
 
-- iniciar cliente MCP,
-- exponer endpoint `POST /api/mcp` para ejecutar tools,
-- exponer endpoint `GET /api/tools` para listar herramientas disponibles,
-- aplicar CORS para frontend local y despliegue.
+Endpoints principales:
 
-Tecnologías principales:
+- `POST /api/chat` — chat con RAG (usado por el frontend)
+- `GET /api/chat/health` — estado del proveedor LLM
+- `POST /api/mcp` — ejecutar una tool MCP
+- `GET /api/tools` — listar tools MCP disponibles
 
-- Node.js (ESM)
-- Express
+Tecnologías:
+
+- Node.js (ESM) + Express 5
+- LangChain + MiniMax (`MiniMax-Text-01`)
+- OpenAI Embeddings (`text-embedding-3-small`)
 - `@modelcontextprotocol/sdk`
 
 Script:
 
-- `npm run serve`: inicia el proxy en `http://localhost:3001`
+- `npm run serve`: inicia el servidor en `http://localhost:3001`
 
-## Cómo ejecutar el monorepo en local
+## Cómo ejecutar en local
 
-Este monorepo no usa workspaces de npm/pnpm; cada paquete se instala por separado.
+### Opción rápida — `start.bat`
 
-1. Instalar dependencias del frontend:
+Doble clic en `start.bat` en la raíz del repo. Levanta ambos servidores en terminales separadas.
+
+### Manual
+
+1. Instalar y levantar el servidor:
 
 ```bash
-cd frontend
+cd mcp-server
 npm install
-```
-
-2. Instalar dependencias del servidor MCP:
-
-```bash
-cd ../mcp-server
-npm install
-```
-
-3. Ejecutar el servidor MCP:
-
-```bash
 npm run serve
 ```
 
-4. En otra terminal, ejecutar el frontend:
+2. En otra terminal, instalar y levantar el frontend:
 
 ```bash
-cd ../frontend
+cd frontend-chat
+npm install
 npm run dev
 ```
 
-5. Abrir la app en `http://localhost:5173`.
+3. Abrir `http://localhost:5173`.
+
+## Variables de entorno
+
+Crea `mcp-server/.env` con:
+
+```env
+MINIMAX_API_KEY=tu_clave_minimax
+MINIMAX_BASE_URL=https://api.minimaxi.chat/v1
+MINIMAX_MODEL=MiniMax-Text-01
+MINIMAX_TEMPERATURE=0.7
+
+OPENAI_API_KEY=tu_clave_openai   # para embeddings
+
+RAG_TOP_K=5                      # chunks recuperados por consulta
+```
 
 ## Flujo de trabajo recomendado
 
-1. Trabaja por paquete: cambios de UI en `frontend/`, cambios de contexto/integración MCP en `mcp-server/`.
-2. Mantén las notas de `mcp-server/context/` pequeñas y atómicas para facilitar consumo por IA.
-3. Antes de abrir PR:
-   - ejecuta `npm run lint` y `npm run build` en `frontend/`;
-   - verifica que `npm run serve` levante correctamente en `mcp-server/`.
+1. Cambios de UI → trabaja en `frontend-chat/`.
+2. Cambios de contexto o lógica de IA → trabaja en `mcp-server/`.
+3. Para agregar conocimiento al dominio, añade notas en `mcp-server/context/` (Markdown atómico, wiki-links con `[[Nota]]`).
+4. Antes de abrir PR: `npm run build` en el frontend y verifica que `npm run serve` levante sin errores.
 
-## Documentación útil dentro del repo
+## Documentación interna
 
-- `frontend/README.md`: detalles funcionales del producto Thesis GPS.
-- `mcp-server/README.md`: brief del challenge y uso del Studyond Brain.
+- `mcp-server/README.md`: brief del challenge y descripción del Studyond Brain.
 - `mcp-server/brand/README.md`: guía de marca y diseño.
-- `README-MCP-IA.md`: arquitectura y flujo de integración entre MCP e IA en este monorepo.
-
-## Notas
-
-- Si necesitas AI en frontend, configura las variables de entorno correspondientes (por ejemplo claves para proveedores de LLM).
-- El conocimiento de negocio y dominio está en `mcp-server/context/`; el frontend lo puede consumir a través del proxy MCP.
+- `README-MCP-IA.md`: arquitectura RAG + MCP + LLM con diagrama de flujo.
