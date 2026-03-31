@@ -163,6 +163,20 @@ async function getMarkdownFilesRecursively(dirPath) {
 }
 
 // ---------------------------------------------------------------------------
+// WikiLink resolution
+// ---------------------------------------------------------------------------
+
+function extractWikiLinks(content) {
+  const matches = [...content.matchAll(/\[\[([^\]]+)\]\]/g)]
+  return matches.map((m) => m[1].trim())
+}
+
+function findChunksForFile(index, linkName) {
+  const normalized = linkName.endsWith('.md') ? linkName : `${linkName}.md`
+  return index.filter((chunk) => chunk.relativePath === normalized)
+}
+
+// ---------------------------------------------------------------------------
 // Public: build (or restore) the embeddings index
 // ---------------------------------------------------------------------------
 
@@ -248,17 +262,41 @@ export async function buildContextSystemMessage(messages) {
 
   if (topChunks.length === 0) return null
 
-  const sources = topChunks.map(({ chunk, score }) => ({
+  // Resolve WikiLinks found in the top chunks and add linked file content
+  const includedPaths = new Set(topChunks.map(({ chunk }) => chunk.relativePath))
+  const linkedChunks = []
+
+  for (const { chunk } of topChunks) {
+    const links = extractWikiLinks(chunk.content)
+    for (const link of links) {
+      const normalized = link.endsWith('.md') ? link : `${link}.md`
+      if (includedPaths.has(normalized)) continue
+      const found = findChunksForFile(index, link)
+      if (found.length > 0) {
+        linkedChunks.push(...found.slice(0, 2)) // max 2 chunks per linked file
+        includedPaths.add(normalized)
+      }
+    }
+  }
+
+  const allChunks = [
+    ...topChunks.map(({ chunk, score }) => ({ chunk, score, linked: false })),
+    ...linkedChunks.map((chunk) => ({ chunk, score: null, linked: true })),
+  ]
+
+  const sources = allChunks.map(({ chunk, score, linked }) => ({
     relativePath: chunk.relativePath,
     heading: chunk.heading ?? null,
     score,
+    linked,
   }))
 
-  const snippets = topChunks.map(({ chunk, score }) => {
+  const snippets = allChunks.map(({ chunk, score, linked }) => {
     const source = chunk.heading
       ? `${chunk.relativePath} › ${chunk.heading}`
       : chunk.relativePath
-    return `Fuente: ${source} (relevancia: ${score.toFixed(2)})\n${chunk.content}`
+    const label = linked ? `Fuente vinculada: ${source}` : `Fuente: ${source} (relevancia: ${score.toFixed(2)})`
+    return `${label}\n${chunk.content}`
   })
 
   const contextBlock = snippets.join('\n\n---\n\n').slice(0, 8000)

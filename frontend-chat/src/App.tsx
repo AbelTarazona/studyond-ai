@@ -14,7 +14,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 
 type ChatRole = 'system' | 'user' | 'assistant'
 
-type Source = { relativePath: string; heading: string | null; score: number }
+type Source = { relativePath: string; heading: string | null; score: number | null; linked?: boolean }
 
 type ChatMessage = {
   id: number
@@ -185,7 +185,12 @@ function App() {
                         </p>
                         <ul className="space-y-0.5">
                           {message.sources!.map((s, i) => (
-                            <li key={i} className="text-xs text-neutral-600 dark:text-neutral-300">
+                            <li key={i} className="flex items-baseline gap-1.5 text-xs text-neutral-600 dark:text-neutral-300">
+                              {s.linked && (
+                                <span className="shrink-0 rounded bg-neutral-200 px-1 py-0.5 text-[10px] font-medium text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400">
+                                  vinculado
+                                </span>
+                              )}
                               {s.heading
                                 ? <><span className="font-medium">{s.relativePath}</span><span className="text-neutral-400"> › </span>{s.heading}</>
                                 : <span className="font-medium">{s.relativePath}</span>}
