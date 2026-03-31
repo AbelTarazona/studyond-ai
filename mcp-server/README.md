@@ -82,3 +82,29 @@ For a richer experience, you could build a small custom MCP server (~100 lines) 
 ---
 
 Good luck! Build something amazing.
+
+## Conversational Bot API (LangChain + MiniMax)
+
+El servidor expone un endpoint de chat conversacional:
+
+- `POST /api/chat`
+
+Body esperado:
+
+```json
+{
+  "messages": [
+    { "role": "system", "content": "..." },
+    { "role": "user", "content": "Hola" }
+  ]
+}
+```
+
+Variables de entorno necesarias:
+
+- `MINIMAX_API_KEY`
+- `MINIMAX_BASE_URL` (default: `https://api.minimax.chat/v1`)
+- `MINIMAX_MODEL` (default: `MiniMax-Text-01`)
+- `MINIMAX_TEMPERATURE` (default: `0.7`)
+
+Puedes copiar `mcp-server/.env.example` y establecer tu clave de MiniMax antes de iniciar el servidor.
